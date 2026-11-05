@@ -1,0 +1,206 @@
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './styles.css';
+
+function App() {
+  const [messages, setMessages] = React.useState([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      text: 'Halo! Saya adalah asisten pribadi Anda. Unggah dokumen, foto, atau file penting, lalu tanyakan apa pun yang ingin Anda pahami dari file tersebut.',
+    },
+  ]);
+  const [files, setFiles] = React.useState([]);
+  const [input, setInput] = React.useState('');
+  const [isSending, setIsSending] = React.useState(false);
+  const [isUploading, setIsUploading] = React.useState(false);
+
+  const fetchFiles = React.useCallback(async () => {
+    const response = await fetch('/api/files');
+    const data = await response.json();
+    setFiles(Array.isArray(data) ? data : []);
+  }, []);
+
+  React.useEffect(() => {
+    fetchFiles();
+  }, [fetchFiles]);
+
+  const handleUpload = async (event) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (!selectedFiles.length) return;
+
+    const formData = new FormData();
+    selectedFiles.forEach((file) => formData.append('files', file));
+
+    setIsUploading(true);
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Upload gagal');
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: `upload-${Date.now()}`,
+          role: 'assistant',
+          text: `Berhasil mengunggah ${result.files.length} file. Saya siap membantu menganalisis isinya.`,
+        },
+      ]);
+      await fetchFiles();
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          text: `Gagal upload file: ${error.message}`,
+        },
+      ]);
+    } finally {
+      setIsUploading(false);
+      event.target.value = '';
+    }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const trimmed = input.trim();
+    if (!trimmed) return;
+
+    setMessages((current) => [
+      ...current,
+      { id: `user-${Date.now()}`, role: 'user', text: trimmed },
+    ]);
+    setInput('');
+    setIsSending(true);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: trimmed }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Chat gagal');
+
+      setMessages((current) => [
+        ...current,
+        { id: `assistant-${Date.now()}`, role: 'assistant', text: result.reply || 'Saya tidak dapat menjawab saat ini.' },
+      ]);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        { id: `chat-error-${Date.now()}`, role: 'assistant', text: `Maaf, terjadi kesalahan: ${error.message}` },
+      ]);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const deleteFile = async (id) => {
+    try {
+      const response = await fetch(`/api/files/${id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Gagal menghapus file');
+      await fetchFiles();
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        { id: `delete-error-${Date.now()}`, role: 'assistant', text: `Tidak dapat menghapus file: ${error.message}` },
+      ]);
+    }
+  };
+
+  return (
+    <div className="app-shell">
+      <div className="ambient ambient-1" />
+      <div className="ambient ambient-2" />
+      <div className="ambient ambient-3" />
+
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Personal AI Workspace</p>
+          <h1>Smart Assistant</h1>
+        </div>
+        <label className="upload-button">
+          <input type="file" multiple onChange={handleUpload} />
+          {isUploading ? 'Mengunggah...' : 'Upload file'}
+        </label>
+      </header>
+
+      <main className="layout">
+        <aside className="panel files-panel">
+          <div className="panel-header">
+            <h2>Dokumen Saya</h2>
+            <span>{files.length}</span>
+          </div>
+
+          {files.length === 0 ? (
+            <div className="empty-state">
+              <p>Belum ada dokumen yang diunggah.</p>
+            </div>
+          ) : (
+            <div className="file-list">
+              {files.map((file) => (
+                <div key={file.id} className="file-card">
+                  <div className="file-card__meta">
+                    <span className="file-tag">{file.type || 'file'}</span>
+                    <button onClick={() => deleteFile(file.id)}>Hapus</button>
+                  </div>
+                  <strong>{file.name}</strong>
+                  <small>{new Date(file.uploadedAt).toLocaleString('id-ID')}</small>
+                  {file.text ? (
+                    <p>{file.text.slice(0, 140)}{file.text.length > 140 ? '...' : ''}</p>
+                  ) : (
+                    <p>Konten teks tidak tersedia untuk file ini.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </aside>
+
+        <section className="chat-panel panel">
+          <div className="chat-header">
+            <div>
+              <p className="eyebrow">Asisten pribadi</p>
+              <h2>Chat dengan AI</h2>
+            </div>
+          </div>
+
+          <div className="messages">
+            {messages.map((message) => (
+              <div key={message.id} className={`message ${message.role}`}>
+                <div className="bubble">
+                  {message.text}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleSubmit} className="composer">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              rows={3}
+              placeholder="Tanyakan tentang dokumen yang Anda unggah..."
+            />
+            <button type="submit" disabled={isSending || !input.trim()}>
+              {isSending ? 'Memproses...' : 'Kirim'}
+            </button>
+          </form>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
